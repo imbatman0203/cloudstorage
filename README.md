@@ -21,6 +21,10 @@ Then open `http://127.0.0.1:5173`.
 
 The included `Dockerfile` builds the web app and runs the API plus FFmpeg worker in one container. For Railway, Render, or Fly.io, deploy from this repository, attach a persistent disk at `/data`, and set `AFTERFRAME_SIGNING_SECRET` to a long random value. The service listens on the provider's `PORT` automatically.
 
+## Supabase persistent storage
+
+Run `supabase/schema.sql` in the project SQL editor to create the `videos` table, private `afterframe-videos` bucket, and owner-level access rules. The cloud project URL and service credentials belong in the deployment environment, never in source control.
+
 ## Included
 
 - Responsive video library with category tabs, search, grid/list views, storage summary, and clip details.
