@@ -1,54 +1,1595 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import Hls from 'hls.js'
-import { Activity, ArrowDownUp, ArrowUpRight, Check, ChevronDown, CircleHelp, Cloud, CloudUpload, Film, Filter, Folder, Grid2X2, HardDrive, Link2, List, MoreHorizontal, Play, Plus, Search, Settings2, Sparkles, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Activity,
+  ArrowDownUp,
+  ArrowUpRight,
+  Check,
+  ChevronDown,
+  CircleHelp,
+  Cloud,
+  CloudUpload,
+  Download,
+  Edit3,
+  Film,
+  Filter,
+  Folder,
+  Grid2X2,
+  HardDrive,
+  Link2,
+  List,
+  MoreHorizontal,
+  Play,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Search,
+  Settings2,
+  Sparkles,
+  Trash2,
+  X
+} from 'lucide-react'
+import { HlsPlayer } from './components/HlsPlayer'
+import { ConstellationBanner, ConstellationExplorer } from './components/ConstellationView'
+import {
+  CATEGORIES,
+  Category,
+  Clip,
+  formatBytes,
+  formatDate,
+  formatTotalDuration,
+  HealthInfo,
+  LIBRARY_TABS,
+  mapApiClip,
+  NavSection,
+  SortMode,
+  StatusFilter,
+  toneColor,
+  User
+} from './types'
 
-type Clip = { id:string|number; title:string; date:string; duration:string; size:string; tone:string; scene:string; status:string; category:string; streamUrl?:string; shareToken?:string; processing?:{stage:string;progress:number} }
-type User = { id:string; name:string; email:string }
-const scenes=['https://images.unsplash.com/photo-1470770841072-f978cf4d019e?auto=format&fit=crop&w=900&q=85','https://images.unsplash.com/photo-1500375592092-40eb2168fd21?auto=format&fit=crop&w=900&q=85','https://images.unsplash.com/photo-1511497584788-876760111969?auto=format&fit=crop&w=900&q=85','https://images.unsplash.com/photo-1500530855697-b586d89ba3ee?auto=format&fit=crop&w=900&q=85']
-const tabs=['All videos','Moments','Travel','Field notes']
-function AuthScreen({onAuthenticated}:{onAuthenticated:(user:User)=>void}){const [mode,setMode]=useState<'login'|'register'>('register'),[name,setName]=useState(''),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');async function submit(event:React.FormEvent){event.preventDefault();setBusy(true);setError('');try{const response=await fetch(`/api/auth/${mode}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,email,password})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Could not continue');onAuthenticated(data.user)}catch(reason){setError(reason instanceof Error?reason.message:'Could not continue')}finally{setBusy(false)}}return <div className="auth-shell"><div className="auth-panel"><div className="brand"><div className="brand-mark"><span/></div><span>afterframe</span><span className="brand-dot">●</span></div><div className="auth-copy"><span className="section-kicker">YOUR PRIVATE VIDEO SPACE</span><h1>{mode==='register'?'Make room for what matters.':'Welcome back.'}</h1><p>Your library, your account, your stories. Stored and streamed from your own private space.</p></div><form onSubmit={submit}><label>{mode==='register'?'Your name':'Email address'}{mode==='register'&&<input value={name} onChange={event=>setName(event.target.value)} placeholder="Alex Morgan" required maxLength={80}/>}</label><label>Email address<input value={email} onChange={event=>setEmail(event.target.value)} placeholder="you@example.com" type="email" required/></label><label>Password<input value={password} onChange={event=>setPassword(event.target.value)} placeholder="At least 8 characters" type="password" minLength={8} required/></label>{error&&<p className="auth-error">{error}</p>}<button className="upload-btn auth-submit" disabled={busy}>{busy?'Please wait…':mode==='register'?'Create private library':'Sign in'}</button></form><button className="auth-switch" onClick={()=>{setMode(mode==='register'?'login':'register');setError('')}}>{mode==='register'?'Already have an account? Sign in':'New here? Create an account'}</button></div><div className="auth-art"><div className="art-orbit orbit-one"/><div className="art-orbit orbit-two"/><div className="art-sun"/><div className="art-leaf leaf-one"/><div className="art-leaf leaf-two"/><p>Every clip,<br/><i>somewhere safe.</i></p></div></div>}
-function HlsPlayer({src}:{src:string}){const player=useRef<HTMLVideoElement>(null);useEffect(()=>{const video=player.current;if(!video)return;if(video.canPlayType('application/vnd.apple.mpegurl')){video.src=src;return}if(Hls.isSupported()){const hls=new Hls();hls.loadSource(src);hls.attachMedia(video);return()=>hls.destroy()}},[src]);return <video className="stream-player" ref={player} controls autoPlay/>}
-function SharedVideoPage({token}:{token:string}){const [clip,setClip]=useState<any>(null),[error,setError]=useState('');useEffect(()=>{fetch(`/api/share/${token}`).then(async response=>{const data=await response.json();if(!response.ok)throw new Error(data.error);setClip(data)}).catch(reason=>setError(reason instanceof Error?reason.message:'Shared video is unavailable'))},[token]);return <div className="auth-shell"><div className="auth-panel"><div className="brand"><div className="brand-mark"><span/></div><span>afterframe</span><span className="brand-dot">●</span></div><div className="auth-copy"><span className="section-kicker">A PRIVATE SHARE</span><h1>{error?'This share is unavailable.':clip?.title||'Opening shared video…'}</h1><p>{error||clip?.status==='Ready'?'This video was shared from a private Afterframe library.':'The owner’s video is still being prepared.'}</p></div></div><div className="share-player">{clip?.playbackUrl?<HlsPlayer src={clip.playbackUrl}/>:<span>{error||'Preparing secure playback…'}</span>}</div></div>}
-function App(){
- const [clips,setClips]=useState<Clip[]>([]),[tab,setTab]=useState('All videos'),[query,setQuery]=useState(''),[view,setView]=useState<'grid'|'list'>('grid'),[selected,setSelected]=useState<Clip|null>(null),[playback,setPlayback]=useState(''),[uploading,setUploading]=useState(false),[toast,setToast]=useState(''),[filter,setFilter]=useState(false),[loading,setLoading]=useState(true),[user,setUser]=useState<User|null>(null),[checking,setChecking]=useState(true),[settingsOpen,setSettingsOpen]=useState(false),[profileName,setProfileName]=useState(''),[savingProfile,setSavingProfile]=useState(false)
- const input=useRef<HTMLInputElement>(null)
- const sharedToken=new URLSearchParams(window.location.search).get('share')
- const visible=useMemo(()=>clips.filter(c=>(tab==='All videos'||c.category===tab)&&c.title.toLowerCase().includes(query.toLowerCase())),[clips,tab,query])
- const usedBytes=useMemo(()=>clips.reduce((total,clip)=>total+Number(String(clip.size).replace(/[^0-9.]/g,''))*(/GB/.test(clip.size)?1e9:1e6),0),[clips])
- const usedText=usedBytes>=1e9?`${(usedBytes/1e9).toFixed(1)} GB`:`${Math.round(usedBytes/1e6)} MB`
- function notify(s:string){setToast(s);window.setTimeout(()=>setToast(''),2600)}
- const mapClip=(item:any,index:number):Clip=>({id:item.id,title:item.title,date:item.uploadedAt?new Intl.DateTimeFormat(undefined,{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}).format(new Date(item.uploadedAt)):'Just now',duration:item.duration||'Preparing',size:item.size>1e9?`${(item.size/1e9).toFixed(1)} GB`:`${Math.max(1,Math.round(item.size/1e6))} MB`,tone:item.tone||['sage','sand','lilac','blue'][index%4],scene:scenes[index%scenes.length],status:item.status,category:item.category||'Moments',streamUrl:`/api/videos/${item.id}/playback`,shareToken:item.shareToken,processing:item.processing})
- async function refreshLibrary(silent=false){try{const response=await fetch('/api/videos');if(!response.ok)throw new Error('Could not load library');const items=await response.json(),next:Clip[]=items.map(mapClip);setClips(next);setSelected(current=>current?next.find((clip:Clip)=>clip.id===current.id)||current:null)}catch(error){if(!silent)notify('Storage service is unavailable')}finally{setLoading(false)}}
- useEffect(()=>{(async()=>{try{const response=await fetch('/api/auth/me');const data=await response.json();setUser(data.user)}finally{setChecking(false)}})()},[])
- useEffect(()=>{if(!user)return;void refreshLibrary();const timer=window.setInterval(()=>void refreshLibrary(true),5000);return()=>window.clearInterval(timer)},[user])
- async function upload(files:FileList|null){if(!files?.length)return;setUploading(true);try{const body=new FormData();Array.from(files).forEach(file=>body.append('videos',file));const response=await fetch('/api/videos',{method:'POST',body});if(!response.ok)throw new Error((await response.json()).error||'Upload failed');const saved=await response.json();setClips(previous=>saved.map(mapClip).concat(previous));notify(`${saved.length} video${saved.length>1?'s':''} queued for streaming`)}catch(error){notify(error instanceof Error?error.message:'Upload failed')}finally{setUploading(false)}}
- function share(){if(!selected)return;const link=selected.shareToken?`${window.location.origin}/?share=${selected.shareToken}`:`${window.location.origin}/watch/${selected.id}`;void navigator.clipboard?.writeText(link);notify('Private viewing link copied')}
- async function logout(){await fetch('/api/auth/logout',{method:'POST'});setUser(null);setClips([]);setSelected(null)}
- function openSettings(){setProfileName(user?.name||'');setSettingsOpen(true)}
- async function saveProfile(event:React.FormEvent){event.preventDefault();setSavingProfile(true);try{const response=await fetch('/api/auth/profile',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:profileName})});const data=await response.json();if(!response.ok)throw new Error(data.error||'Could not save profile');setUser(data.user);setSettingsOpen(false);notify('Profile updated')}catch(error){notify(error instanceof Error?error.message:'Could not save profile')}finally{setSavingProfile(false)}}
- async function deleteVideo(){if(!selected)return;if(!window.confirm(`Move “${selected.title}” to trash? You can restore it through the API before permanent cleanup.`))return;const response=await fetch(`/api/videos/${selected.id}`,{method:'DELETE'});if(!response.ok){notify('Could not move video to trash');return}setClips(previous=>previous.filter(clip=>clip.id!==selected.id));setSelected(null);notify('Video moved to trash')}
- async function requestPlayback(clip:Clip,silent=false){if(!clip.streamUrl)return;try{const response=await fetch(`/api/videos/${clip.id}/playback`);if(response.status===409)return; if(!response.ok)throw new Error('Playback is unavailable');const data=await response.json();setPlayback(data.url)}catch(error){if(!silent)notify(error instanceof Error?error.message:'Playback unavailable')}}
- async function openClip(clip:Clip){setSelected(clip);setPlayback('');void requestPlayback(clip)}
- useEffect(()=>{if(!selected||playback||selected.status==='Failed')return;const timer=window.setInterval(()=>void requestPlayback(selected,true),3000);return()=>window.clearInterval(timer)},[selected,playback])
- if(sharedToken)return <SharedVideoPage token={sharedToken}/>
- if(checking)return <div className="app auth-loading">Loading your private library…</div>
- if(!user)return <AuthScreen onAuthenticated={setUser}/>
- return <div className="app" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();upload(e.dataTransfer.files)}}>
-  <aside className="sidebar"><div className="brand"><div className="brand-mark"><span/></div><span>afterframe</span><span className="brand-dot">●</span></div><button className="workspace" onClick={openSettings}><div className="workspace-icon">{user.name.slice(0,1).toUpperCase()}</div><div><b>{user.name}</b><small>Personal space</small></div><ChevronDown size={15}/></button><div className="side-label">LIBRARY</div><nav>{tabs.map((t,i)=><button key={t} className={`nav-item ${tab===t?'active':''}`} onClick={()=>setTab(t)}>{i===0?<Film size={17}/>:<Folder size={17}/>}<span>{t}</span>{i===0&&<em>{clips.length}</em>}</button>)}<button className="nav-item" onClick={()=>notify('Your collections are ready to explore')}><Sparkles size={17}/><span>Collections</span></button></nav><div className="side-label storage-label">STORAGE</div><div className="storage"><div className="storage-top"><HardDrive size={16}/><span>Cloud storage</span><MoreHorizontal size={17}/></div><div className="storage-meter"><i style={{width:`${Math.min(100,usedBytes/1e9)}%`}}/></div><div className="storage-foot"><span>{usedText} used</span><span>of 100 GB</span></div><button className="upgrade" onClick={()=>notify('You’re on the Founders plan')}>Manage plan <ArrowUpRight size={13}/></button></div><div className="sidebar-bottom"><button className="nav-item" onClick={openSettings}><Settings2 size={17}/><span>Settings</span></button><button className="nav-item" onClick={()=>notify('For help, contact the library owner from your deployment dashboard.')}><CircleHelp size={17}/><span>Help & support</span></button><button className="profile" onClick={openSettings}><div className="avatar">{user.name.slice(0,2).toUpperCase()}</div><div><b>{user.name}</b><small>{user.email}</small></div><span className="profile-edit">Edit</span></button><button className="signout profile-signout" onClick={logout}>Sign out</button></div></aside>
-  <main><header className="topbar"><div className="crumb">Library <span>/</span> <b>{tab}</b></div><div className="top-actions"><button className="icon-button" onClick={()=>notify('All systems operational')}><Activity size={17}/><span className="online"/></button><button className="help" onClick={()=>notify('Help center opened')}>?</button><div className="avatar mini">{user.name.split(' ').map(part=>part[0]).join('').slice(0,2).toUpperCase()}</div></div></header>
-  <div className="content"><section className="welcome"><div><div className="eyebrow"><span className="live-dot"/> YOUR LITTLE CORNER OF THE CLOUD</div><h1>Keep the moments<br/><i>that move you.</i></h1><p>A home for your videos, wherever life takes them.</p></div><div className="welcome-art"><div className="art-orbit orbit-one"/><div className="art-orbit orbit-two"/><div className="art-sun"/><div className="art-leaf leaf-one"/><div className="art-leaf leaf-two"/><div className="art-card"><Play size={17} fill="currentColor"/><span>your story, still unfolding</span></div></div></section>
-   <section className="quick-stats"><div className="stat"><div className="stat-icon green"><Film size={16}/></div><div><strong>{clips.length.toString().padStart(2,'0')}</strong><span>videos saved</span></div></div><div className="stat"><div className="stat-icon tan"><Cloud size={16}/></div><div><strong>12.8 <small>GB</small></strong><span>of 100 GB used</span></div></div><div className="stat"><div className="stat-icon pink"><Sparkles size={16}/></div><div><strong>4 <small>days</small></strong><span>of memories this week</span></div></div><div className="stat-note"><span>✳</span> Every clip has a place here.</div></section>
-   <section className="library-head"><div><div className="section-kicker">YOUR LIBRARY <span>✳</span></div><h2>Video shelf <span className="count">{visible.length}</span></h2><p className="section-sub">A few good things, all in one place.</p></div><button className="upload-btn" onClick={()=>input.current?.click()}><Plus size={17}/> Add videos</button><input ref={input} hidden type="file" accept="video/*" multiple onChange={e=>upload(e.target.files)}/></section>
-   <div className="toolbar"><div className="tabs">{tabs.map(t=><button key={t} onClick={()=>setTab(t)} className={tab===t?'chosen':''}>{t}{t==='All videos'&&<span>{clips.length}</span>}</button>)}</div><div className="tools"><label className="search"><Search size={15}/><input placeholder="Find a video..." value={query} onChange={e=>setQuery(e.target.value)}/>{query&&<button onClick={()=>setQuery('')}><X size={13}/></button>}</label><button className={`tool-button ${filter?'on':''}`} onClick={()=>setFilter(!filter)}><Filter size={15}/><span>Filter</span></button><button className="tool-button" onClick={()=>notify('Sorted by recently added')}><ArrowDownUp size={15}/></button><div className="view-toggle"><button className={view==='grid'?'selected':''} onClick={()=>setView('grid')}><Grid2X2 size={15}/></button><button className={view==='list'?'selected':''} onClick={()=>setView('list')}><List size={16}/></button></div></div></div>
-   {filter&&<div className="filter-note"><span>Showing ready videos</span><button onClick={()=>setFilter(false)}>Clear filters <X size={13}/></button></div>}
-   {visible.length?<div className={`video-grid ${view==='list'?'list-view':''}`}>{visible.map((c,i)=><article className="video-card" key={c.id}><button className={`thumbnail ${c.tone}`} onClick={()=>openClip(c)} style={{backgroundImage:`linear-gradient(180deg,transparent 48%,rgba(13,18,14,.54)),url("${c.scene}")`}}><span className="duration">{c.duration}</span><span className="play-button"><Play size={17} fill="currentColor"/></span><span className="thumb-index">{String(i+1).padStart(2,'0')}</span></button><div className="card-meta"><div><h3>{c.title}</h3><p>{c.date}</p></div><button className="more" onClick={()=>openClip(c)}><MoreHorizontal size={18}/></button></div><div className="card-bottom"><span className="tag"><i className={`tag-dot ${c.tone}`}/>{c.category}</span><span className="file-size">{c.size}</span><span className="ready"><i/>{c.status}</span></div></article>)}</div>:<div className="empty"><div className="empty-icon"><Film size={22}/></div><h3>No videos found</h3><p>Try another search or add a video to your shelf.</p><button className="upload-btn" onClick={()=>input.current?.click()}><Plus size={16}/> Add a video</button></div>}
-   <section className="constellation"><div className="const-copy"><div className="section-kicker">A LITTLE SOMETHING DIFFERENT <span>✳</span></div><h2>Your memories,<br/><i>in constellation.</i></h2><p>We find the color in every clip and arrange your library into a living map. The more you save, the more your story takes shape.</p><button onClick={()=>notify('Your memory constellation is taking shape')}>Explore your constellation <ArrowUpRight size={15}/></button></div><div className="const-art"><svg viewBox="0 0 490 250" role="img" aria-label="A map of video memories connected by a soft constellation"><path className="const-line" d="M46 184 C113 155 115 75 187 97 S267 205 319 134 S393 39 449 76"/><path className="const-line faint" d="M46 184 C111 215 168 201 187 97 M187 97 C258 71 321 42 393 39 M319 134 C359 173 397 177 449 76"/><circle className="const-node node-a" cx="46" cy="184" r="8"/><circle className="const-node node-b" cx="187" cy="97" r="12"/><circle className="const-node node-c" cx="319" cy="134" r="9"/><circle className="const-node node-d" cx="393" cy="39" r="7"/><circle className="const-node node-e" cx="449" cy="76" r="10"/><circle className="const-star" cx="111" cy="117" r="3"/><circle className="const-star" cx="257" cy="60" r="2"/><circle className="const-star" cx="380" cy="210" r="2"/></svg><div className="const-label label-a">first light · 10:42</div><div className="const-label label-b">the long way home</div><div className="const-label label-c">november, somewhere</div><div className="const-count"><Sparkles size={13}/> 4 little universes</div></div></section>
-   <footer><span>Made for the moments that stay.</span><span><i/> All systems lovely <b>·</b> Encrypted at rest</span><span>© 2025 Afterframe</span></footer>
-  </div></main>
-  {uploading&&<div className="uploading"><div className="upload-spin"><CloudUpload size={17}/></div><div><b>Making room for your moments</b><span>Uploading and preparing your videos…</span></div><button onClick={()=>setUploading(false)}><X size={16}/></button></div>}
-  {settingsOpen&&<div className="modal-backdrop" onClick={()=>setSettingsOpen(false)}><form className="settings-modal" onSubmit={saveProfile} onClick={event=>event.stopPropagation()}><button type="button" className="modal-close" onClick={()=>setSettingsOpen(false)}><X size={17}/></button><span className="section-kicker">ACCOUNT SETTINGS</span><h2>Your private library</h2><p>Update the name shown across your video space.</p><label>Display name<input value={profileName} onChange={event=>setProfileName(event.target.value)} maxLength={80} required/></label><label>Email address<input value={user.email} disabled/></label><button className="upload-btn settings-save" disabled={savingProfile}>{savingProfile?'Saving…':'Save changes'}</button></form></div>}
-  {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}><div className="modal" onClick={e=>e.stopPropagation()}><button className="modal-close" onClick={()=>setSelected(null)}><X size={17}/></button><div className="modal-image" style={selected.streamUrl?undefined:{backgroundImage:`linear-gradient(0deg,rgba(10,15,12,.35),transparent),url("${selected.scene}")`}}>{playback?<HlsPlayer src={playback}/> :selected.streamUrl?<div className="preparing"><b>{selected.status==='Failed'?'Stream conversion failed':selected.processing?.stage||'Preparing secure stream'}</b><span>{selected.status==='Failed'?'Try uploading a standard MP4, WebM, or MOV file.':`${selected.processing?.progress||0}% complete · playback will start automatically`}</span></div>:<button className="large-play"><Play size={23} fill="currentColor"/></button>}<span className="duration">{selected.duration}</span></div><div className="modal-info"><div><span className="section-kicker">{selected.category.toUpperCase()} · {selected.size}</span><h2>{selected.title}</h2><p>{selected.date} <span>·</span> Original quality stored securely</p></div><button className="share-button" onClick={share}><Link2 size={15}/> Copy private link</button></div><div className="modal-foot"><span><i className="ready-dot"/> {selected.status==='Ready'?'Ready to stream in original quality':`${selected.status}: processing in the background`}</span><button className="delete-button" onClick={deleteVideo}><Trash2 size={13}/> Move to trash</button></div></div></div>}
-  {toast&&<div className="toast"><Check size={15}/>{toast}</div>}
- </div>
+const STORAGE_QUOTA_BYTES = 100 * 1e9
+
+const SORT_LABELS: Record<SortMode, string> = {
+  newest: 'Newest first',
+  oldest: 'Oldest first',
+  title: 'Title A–Z',
+  largest: 'Largest first',
+  longest: 'Longest first'
 }
+
+const SORT_ORDER: SortMode[] = ['newest', 'oldest', 'title', 'largest', 'longest']
+const STATUS_ORDER: StatusFilter[] = ['all', 'Ready', 'Processing', 'Failed']
+
+function AuthScreen({ onAuthenticated }: { onAuthenticated: (user: User) => void }) {
+  const [mode, setMode] = useState<'login' | 'register'>('register')
+  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit(event: React.FormEvent) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      const payload = mode === 'register' ? { name, email, password } : { email, password }
+      const response = await fetch(`/api/auth/${mode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Could not continue')
+      onAuthenticated(data.user)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not continue')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-panel">
+        <div className="brand">
+          <div className="brand-mark">
+            <span />
+          </div>
+          <span>afterframe</span>
+          <span className="brand-dot">●</span>
+        </div>
+
+        <div className="auth-copy">
+          <span className="section-kicker">YOUR PRIVATE VIDEO SPACE</span>
+          <h1>{mode === 'register' ? 'Make room for what matters.' : 'Welcome back.'}</h1>
+          <p>
+            Your library, your account, your stories. Stored and streamed from your own private
+            space.
+          </p>
+        </div>
+
+        <form onSubmit={submit}>
+          {mode === 'register' && (
+            <label>
+              Your name
+              <input
+                value={name}
+                onChange={event => setName(event.target.value)}
+                placeholder="Alex Morgan"
+                required
+                maxLength={80}
+                autoComplete="name"
+              />
+            </label>
+          )}
+          <label>
+            Email address
+            <input
+              value={email}
+              onChange={event => setEmail(event.target.value)}
+              placeholder="you@example.com"
+              type="email"
+              required
+              autoComplete="email"
+            />
+          </label>
+          <label>
+            Password
+            <input
+              value={password}
+              onChange={event => setPassword(event.target.value)}
+              placeholder="At least 8 characters"
+              type="password"
+              minLength={8}
+              required
+              autoComplete={mode === 'register' ? 'new-password' : 'current-password'}
+            />
+          </label>
+          {error && <p className="auth-error">{error}</p>}
+          <button className="upload-btn auth-submit" disabled={busy}>
+            {busy ? 'Please wait…' : mode === 'register' ? 'Create private library' : 'Sign in'}
+          </button>
+        </form>
+
+        <button
+          type="button"
+          className="auth-switch"
+          onClick={() => {
+            setMode(mode === 'register' ? 'login' : 'register')
+            setError('')
+          }}
+        >
+          {mode === 'register'
+            ? 'Already have an account? Sign in'
+            : 'New here? Create an account'}
+        </button>
+      </div>
+
+      <div className="auth-art">
+        <div className="art-orbit orbit-one" />
+        <div className="art-orbit orbit-two" />
+        <div className="art-sun" />
+        <div className="art-leaf leaf-one" />
+        <div className="art-leaf leaf-two" />
+        <p>
+          Every clip,
+          <br />
+          <i>somewhere safe.</i>
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function SharedVideoPage({ token }: { token: string }) {
+  const [clip, setClip] = useState<any>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    let active = true
+    async function load() {
+      try {
+        const response = await fetch(`/api/share/${token}`)
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'Shared video is unavailable.')
+        if (active) {
+          setClip(data)
+          setError('')
+        }
+      } catch (reason) {
+        if (active) {
+          setError(reason instanceof Error ? reason.message : 'Shared video is unavailable.')
+        }
+      }
+    }
+    void load()
+    const timer = window.setInterval(() => {
+      if (!clip?.playbackUrl && !error) void load()
+    }, 4000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [token, clip?.playbackUrl, error])
+
+  const subtitle = error
+    ? error
+    : clip?.status === 'Ready'
+      ? `Shared from a private Afterframe library · ${clip.category || 'Moments'} · ${clip.duration || ''}`
+      : 'The owner’s video is still being prepared for streaming.'
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-panel">
+        <a className="brand brand-link" href="/">
+          <div className="brand-mark">
+            <span />
+          </div>
+          <span>afterframe</span>
+          <span className="brand-dot">●</span>
+        </a>
+        <div className="auth-copy">
+          <span className="section-kicker">A PRIVATE SHARE</span>
+          <h1>{error ? 'This share is unavailable.' : clip?.title || 'Opening shared video…'}</h1>
+          <p>{subtitle}</p>
+          {clip && !error && (
+            <div className="share-meta">
+              <span>{formatDate(clip.uploadedAt)}</span>
+              {clip.size ? <span>· {formatBytes(Number(clip.size))}</span> : null}
+            </div>
+          )}
+          <a className="share-home-link" href="/">
+            Open Afterframe <ArrowUpRight size={14} />
+          </a>
+        </div>
+      </div>
+
+      <div className="share-player">
+        {clip?.playbackUrl ? (
+          <HlsPlayer src={clip.playbackUrl} poster={clip.thumbnailUrl} />
+        ) : (
+          <div className="preparing">
+            <b>{error ? 'Link expired or removed' : clip?.processing?.stage || 'Preparing secure playback…'}</b>
+            <span>
+              {error
+                ? 'Ask the owner for a new viewing link.'
+                : `${clip?.processing?.progress ?? 0}% complete`}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+type ToastState = {
+  message: string
+  actionLabel?: string
+  onAction?: () => void
+} | null
+
+function App() {
+  const [clips, setClips] = useState<Clip[]>([])
+  const [trash, setTrash] = useState<Clip[]>([])
+  const [section, setSection] = useState<NavSection>('All videos')
+  const [query, setQuery] = useState('')
+  const [view, setView] = useState<'grid' | 'list'>('grid')
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
+  const [sortMode, setSortMode] = useState<SortMode>('newest')
+  const [selected, setSelected] = useState<Clip | null>(null)
+  const [playback, setPlayback] = useState('')
+  const [uploading, setUploading] = useState<{ count: number; progress: number } | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const [toast, setToast] = useState<ToastState>(null)
+  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState<User | null>(null)
+  const [checking, setChecking] = useState(true)
+
+  // Modal states
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [profileName, setProfileName] = useState('')
+  const [savingProfile, setSavingProfile] = useState(false)
+  const [healthModalOpen, setHealthModalOpen] = useState(false)
+  const [health, setHealth] = useState<HealthInfo | null>(null)
+  const [storageModalOpen, setStorageModalOpen] = useState(false)
+  const [helpModalOpen, setHelpModalOpen] = useState(false)
+
+  // Clip detail edit states
+  const [editingClip, setEditingClip] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editCategory, setEditCategory] = useState<Category>('Moments')
+  const [savingClip, setSavingClip] = useState(false)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [confirmPermanentId, setConfirmPermanentId] = useState<string | null>(null)
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
+  const toastTimerRef = useRef<number | null>(null)
+
+  const sharedToken = new URLSearchParams(window.location.search).get('share')
+
+  const notify = useCallback(
+    (message: string, action?: { label: string; onClick: () => void }) => {
+      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
+      setToast({ message, actionLabel: action?.label, onAction: action?.onClick })
+      toastTimerRef.current = window.setTimeout(
+        () => setToast(null),
+        action ? 5500 : 2800
+      )
+    },
+    []
+  )
+
+  const refreshLibrary = useCallback(
+    async (silent = false) => {
+      try {
+        const [videosRes, trashRes] = await Promise.all([fetch('/api/videos'), fetch('/api/trash')])
+        if (videosRes.status === 401) {
+          setUser(null)
+          return
+        }
+        if (!videosRes.ok) throw new Error('Could not load library')
+        const [videoItems, trashItems] = await Promise.all([
+          videosRes.json(),
+          trashRes.ok ? trashRes.json() : Promise.resolve([])
+        ])
+        const nextClips: Clip[] = videoItems.map(mapApiClip)
+        const nextTrash: Clip[] = trashItems.map(mapApiClip)
+        setClips(nextClips)
+        setTrash(nextTrash)
+        setSelected(current =>
+          current ? nextClips.find(clip => clip.id === current.id) || current : null
+        )
+      } catch {
+        if (!silent) notify('Storage service is unavailable')
+      } finally {
+        setLoading(false)
+      }
+    },
+    [notify]
+  )
+
+  const fetchHealth = useCallback(async () => {
+    try {
+      const response = await fetch('/api/health')
+      if (response.ok) setHealth(await response.json())
+    } catch {
+      setHealth(null)
+    }
+  }, [])
+
+  // Initial session check
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const response = await fetch('/api/auth/me')
+        const data = await response.json()
+        setUser(data.user || null)
+      } finally {
+        setChecking(false)
+      }
+    })()
+  }, [])
+
+  // Periodic library refresh while signed in (faster when processing jobs exist)
+  const hasProcessing = useMemo(
+    () => clips.some(clip => clip.status === 'Queued' || clip.status === 'Processing'),
+    [clips]
+  )
+
+  useEffect(() => {
+    if (!user) return
+    void refreshLibrary()
+    void fetchHealth()
+    const interval = window.setInterval(
+      () => void refreshLibrary(true),
+      hasProcessing ? 2500 : 8000
+    )
+    return () => window.clearInterval(interval)
+  }, [user, hasProcessing, refreshLibrary, fetchHealth])
+
+  // Global keyboard shortcuts: Esc to close modals, / to focus search
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        setSelected(null)
+        setEditingClip(false)
+        setSettingsOpen(false)
+        setHealthModalOpen(false)
+        setStorageModalOpen(false)
+        setHelpModalOpen(false)
+      } else if (
+        event.key === '/' &&
+        !(event.target instanceof HTMLInputElement) &&
+        !(event.target instanceof HTMLTextAreaElement) &&
+        !(event.target instanceof HTMLSelectElement)
+      ) {
+        event.preventDefault()
+        searchInputRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
+
+  // Derived stats & visible list
+  const visible = useMemo(() => {
+    const activeTab = LIBRARY_TABS.includes(section as any) ? section : 'All videos'
+    const normalizedQuery = query.trim().toLowerCase()
+    const filtered = clips.filter(clip => {
+      if (activeTab !== 'All videos' && clip.category !== activeTab) return false
+      if (statusFilter === 'Ready' && clip.status !== 'Ready') return false
+      if (
+        statusFilter === 'Processing' &&
+        clip.status !== 'Processing' &&
+        clip.status !== 'Queued'
+      ) {
+        return false
+      }
+      if (statusFilter === 'Failed' && clip.status !== 'Failed') return false
+      if (normalizedQuery) {
+        const hay = `${clip.title} ${clip.category} ${clip.tone}`.toLowerCase()
+        if (!hay.includes(normalizedQuery)) return false
+      }
+      return true
+    })
+
+    return filtered.slice().sort((a, b) => {
+      switch (sortMode) {
+        case 'oldest':
+          return new Date(a.uploadedAt).getTime() - new Date(b.uploadedAt).getTime()
+        case 'title':
+          return a.title.localeCompare(b.title)
+        case 'largest':
+          return b.sizeBytes - a.sizeBytes
+        case 'longest':
+          return b.durationSeconds - a.durationSeconds
+        case 'newest':
+        default:
+          return new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime()
+      }
+    })
+  }, [clips, section, statusFilter, query, sortMode])
+
+  const allStoredClips = useMemo(() => [...clips, ...trash], [clips, trash])
+  const usedBytes = useMemo(
+    () => allStoredClips.reduce((total, clip) => total + clip.sizeBytes, 0),
+    [allStoredClips]
+  )
+  const usedText = formatBytes(usedBytes)
+  const usedPercent = Math.min(100, (usedBytes / STORAGE_QUOTA_BYTES) * 100)
+
+  const weeklyStats = useMemo(() => {
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000
+    const recent = clips.filter(clip => new Date(clip.uploadedAt).getTime() >= weekAgo)
+    const days = new Set(recent.map(clip => new Date(clip.uploadedAt).toDateString())).size
+    return { count: recent.length, days }
+  }, [clips])
+
+  const storageBreakdown = useMemo(() => {
+    const byCategory = CATEGORIES.map(category => {
+      const items = clips.filter(clip => clip.category === category)
+      return {
+        label: category,
+        count: items.length,
+        bytes: items.reduce((sum, clip) => sum + clip.sizeBytes, 0)
+      }
+    })
+    const trashBytes = trash.reduce((sum, clip) => sum + clip.sizeBytes, 0)
+    const totalDuration = clips.reduce((sum, clip) => sum + clip.durationSeconds, 0)
+    return { byCategory, trashBytes, totalDuration }
+  }, [clips, trash])
+
+  const categoryCounts = useMemo(() => {
+    const map: Record<string, number> = { 'All videos': clips.length }
+    for (const cat of CATEGORIES) {
+      map[cat] = clips.filter(clip => clip.category === cat).length
+    }
+    return map
+  }, [clips])
+
+  // Upload using XHR for real progress tracking
+  function upload(files: FileList | null) {
+    if (!files?.length) return
+    const targetCategory: Category = CATEGORIES.includes(section as Category)
+      ? (section as Category)
+      : 'Moments'
+    const formData = new FormData()
+    formData.append('category', targetCategory)
+    Array.from(files).forEach(file => formData.append('videos', file))
+
+    setUploading({ count: files.length, progress: 0 })
+
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/videos')
+
+    xhr.upload.onprogress = event => {
+      if (event.lengthComputable) {
+        const percent = Math.round((event.loaded / event.total) * 100)
+        setUploading({ count: files.length, progress: percent })
+      }
+    }
+
+    xhr.onload = () => {
+      setUploading(null)
+      try {
+        const payload = JSON.parse(xhr.responseText || '{}')
+        if (xhr.status < 200 || xhr.status >= 300) {
+          throw new Error(payload.error || 'Upload failed')
+        }
+        const saved: Clip[] = payload.map(mapApiClip)
+        setClips(previous => [...saved, ...previous])
+        if (section === 'Trash') setSection('All videos')
+        notify(
+          `${saved.length} video${saved.length > 1 ? 's' : ''} queued in ${targetCategory}`
+        )
+      } catch (reason) {
+        notify(reason instanceof Error ? reason.message : 'Upload failed')
+      }
+    }
+
+    xhr.onerror = () => {
+      setUploading(null)
+      notify('Network error during upload')
+    }
+
+    xhr.send(formData)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const requestPlayback = useCallback(
+    async (clip: Clip, silent = false) => {
+      try {
+        const response = await fetch(`/api/videos/${clip.id}/playback`)
+        if (response.status === 409) return
+        if (!response.ok) throw new Error('Playback is unavailable')
+        const data = await response.json()
+        setPlayback(data.url)
+      } catch (reason) {
+        if (!silent) {
+          notify(reason instanceof Error ? reason.message : 'Playback unavailable')
+        }
+      }
+    },
+    [notify]
+  )
+
+  function openClip(clip: Clip) {
+    setSelected(clip)
+    setPlayback('')
+    setEditingClip(false)
+    setEditTitle(clip.title)
+    setEditCategory(
+      CATEGORIES.includes(clip.category as Category) ? (clip.category as Category) : 'Moments'
+    )
+    setCopiedId(null)
+    void requestPlayback(clip)
+  }
+
+  // Poll playback automatically while selected clip is still transcoding
+  useEffect(() => {
+    if (!selected || playback || selected.status === 'Failed') return
+    const timer = window.setInterval(() => void requestPlayback(selected, true), 2500)
+    return () => window.clearInterval(timer)
+  }, [selected, playback, requestPlayback])
+
+  async function saveClipEdits(event: React.FormEvent) {
+    event.preventDefault()
+    if (!selected) return
+    setSavingClip(true)
+    try {
+      const response = await fetch(`/api/videos/${selected.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: editTitle, category: editCategory })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Could not update video')
+      const updated = mapApiClip(data)
+      setClips(previous => previous.map(clip => (clip.id === updated.id ? updated : clip)))
+      setSelected(updated)
+      setEditingClip(false)
+      notify('Video details updated')
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : 'Could not update video')
+    } finally {
+      setSavingClip(false)
+    }
+  }
+
+  async function retryProcessing(clip: Clip) {
+    try {
+      const response = await fetch(`/api/videos/${clip.id}/retry`, { method: 'POST' })
+      if (!response.ok) throw new Error('Could not retry transcoding')
+      const updated = mapApiClip(await response.json())
+      setClips(previous => previous.map(item => (item.id === updated.id ? updated : item)))
+      if (selected?.id === updated.id) {
+        setSelected(updated)
+        setPlayback('')
+      }
+      notify('Re-queued for HLS transcoding')
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : 'Could not retry')
+    }
+  }
+
+  function shareClip() {
+    if (!selected?.shareToken) return
+    const link = `${window.location.origin}/?share=${selected.shareToken}`
+    void navigator.clipboard?.writeText(link)
+    setCopiedId(selected.id)
+    window.setTimeout(() => setCopiedId(null), 2200)
+    notify('Private viewing link copied')
+  }
+
+  async function restoreVideo(id: string) {
+    try {
+      const response = await fetch(`/api/videos/${id}/restore`, { method: 'POST' })
+      if (!response.ok) throw new Error('Could not restore video')
+      const restored = mapApiClip(await response.json())
+      setTrash(previous => previous.filter(clip => clip.id !== id))
+      setClips(previous => [restored, ...previous])
+      notify(`Restored “${restored.title}”`)
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : 'Could not restore video')
+    }
+  }
+
+  async function moveToTrash(clip: Clip) {
+    const response = await fetch(`/api/videos/${clip.id}`, { method: 'DELETE' })
+    if (!response.ok) {
+      notify('Could not move video to trash')
+      return
+    }
+    setClips(previous => previous.filter(item => item.id !== clip.id))
+    setTrash(previous => [{ ...clip, deletedAt: new Date().toISOString() }, ...previous])
+    setSelected(null)
+    notify(`Moved “${clip.title}” to trash`, {
+      label: 'Undo',
+      onClick: () => void restoreVideo(clip.id)
+    })
+  }
+
+  async function permanentlyDelete(clip: Clip) {
+    const response = await fetch(`/api/videos/${clip.id}/permanent`, { method: 'DELETE' })
+    if (!response.ok) {
+      notify('Could not permanently delete video')
+      return
+    }
+    setTrash(previous => previous.filter(item => item.id !== clip.id))
+    setConfirmPermanentId(null)
+    notify(`Permanently deleted “${clip.title}”`)
+  }
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    setUser(null)
+    setClips([])
+    setTrash([])
+    setSelected(null)
+  }
+
+  function openSettings() {
+    setProfileName(user?.name || '')
+    setSettingsOpen(true)
+  }
+
+  async function saveProfile(event: React.FormEvent) {
+    event.preventDefault()
+    setSavingProfile(true)
+    try {
+      const response = await fetch('/api/auth/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: profileName })
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Could not save profile')
+      setUser(data.user)
+      setSettingsOpen(false)
+      notify('Profile updated')
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : 'Could not save profile')
+    } finally {
+      setSavingProfile(false)
+    }
+  }
+
+  function cycleFilter() {
+    const next = STATUS_ORDER[(STATUS_ORDER.indexOf(statusFilter) + 1) % STATUS_ORDER.length]
+    setStatusFilter(next)
+  }
+
+  function cycleSort() {
+    const next = SORT_ORDER[(SORT_ORDER.indexOf(sortMode) + 1) % SORT_ORDER.length]
+    setSortMode(next)
+    notify(`Sorted: ${SORT_LABELS[next]}`)
+  }
+
+  if (sharedToken) return <SharedVideoPage token={sharedToken} />
+  if (checking) return <div className="app auth-loading">Loading your private library…</div>
+  if (!user) return <AuthScreen onAuthenticated={setUser} />
+
+  const initials = user.name
+    .split(/\s+/)
+    .filter(Boolean)
+    .map(part => part[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase()
+
+  const isLibraryView = LIBRARY_TABS.includes(section as any)
+
+  return (
+    <div
+      className="app"
+      onDragEnter={event => {
+        event.preventDefault()
+        if (event.dataTransfer.types.includes('Files')) setDragging(true)
+      }}
+      onDragOver={event => {
+        event.preventDefault()
+      }}
+      onDragLeave={event => {
+        if (event.currentTarget === event.target) setDragging(false)
+      }}
+      onDrop={event => {
+        event.preventDefault()
+        setDragging(false)
+        upload(event.dataTransfer.files)
+      }}
+    >
+      {/* Hidden shared file input */}
+      <input
+        ref={fileInputRef}
+        hidden
+        type="file"
+        accept="video/*"
+        multiple
+        onChange={event => upload(event.target.files)}
+      />
+
+      {/* Sidebar */}
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">
+            <span />
+          </div>
+          <span>afterframe</span>
+          <span className="brand-dot">●</span>
+        </div>
+
+        <button className="workspace" onClick={openSettings}>
+          <div className="workspace-icon">{user.name.slice(0, 1).toUpperCase()}</div>
+          <div>
+            <b>{user.name}</b>
+            <small>Personal space</small>
+          </div>
+          <ChevronDown size={15} />
+        </button>
+
+        <div className="side-label">LIBRARY</div>
+        <nav>
+          {LIBRARY_TABS.map((tabName, index) => (
+            <button
+              key={tabName}
+              className={`nav-item ${section === tabName ? 'active' : ''}`}
+              onClick={() => setSection(tabName)}
+            >
+              {index === 0 ? <Film size={17} /> : <Folder size={17} />}
+              <span>{tabName}</span>
+              <em>{categoryCounts[tabName] || 0}</em>
+            </button>
+          ))}
+          <button
+            className={`nav-item ${section === 'Constellation' ? 'active' : ''}`}
+            onClick={() => setSection('Constellation')}
+          >
+            <Sparkles size={17} />
+            <span>Constellation</span>
+          </button>
+          <button
+            className={`nav-item ${section === 'Trash' ? 'active' : ''}`}
+            onClick={() => setSection('Trash')}
+          >
+            <Trash2 size={17} />
+            <span>Trash</span>
+            {trash.length > 0 && <em>{trash.length}</em>}
+          </button>
+        </nav>
+
+        <div className="side-label storage-label">STORAGE</div>
+        <div className="storage">
+          <div className="storage-top">
+            <HardDrive size={16} />
+            <span>{health?.storage === 'supabase' ? 'Supabase cloud' : 'Local vault'}</span>
+            <button
+              className="icon-inline"
+              onClick={() => setStorageModalOpen(true)}
+              aria-label="Storage details"
+            >
+              <MoreHorizontal size={16} />
+            </button>
+          </div>
+          <div className="storage-meter">
+            <i style={{ width: `${Math.max(usedBytes > 0 ? 3 : 0, usedPercent)}%` }} />
+          </div>
+          <div className="storage-foot">
+            <span>{usedText} used</span>
+            <span>of 100 GB</span>
+          </div>
+          <button className="upgrade" onClick={() => setStorageModalOpen(true)}>
+            Storage breakdown <ArrowUpRight size={13} />
+          </button>
+        </div>
+
+        <div className="sidebar-bottom">
+          <button className="nav-item" onClick={openSettings}>
+            <Settings2 size={17} />
+            <span>Settings</span>
+          </button>
+          <button className="nav-item" onClick={() => setHelpModalOpen(true)}>
+            <CircleHelp size={17} />
+            <span>Help & shortcuts</span>
+          </button>
+          <button className="profile" onClick={openSettings}>
+            <div className="avatar">{initials}</div>
+            <div>
+              <b>{user.name}</b>
+              <small>{user.email}</small>
+            </div>
+            <span className="profile-edit">Edit</span>
+          </button>
+          <button className="signout profile-signout" onClick={logout}>
+            Sign out
+          </button>
+        </div>
+      </aside>
+
+      {/* Main content */}
+      <main>
+        <header className="topbar">
+          <div className="crumb">
+            Library <span>/</span> <b>{section}</b>
+          </div>
+          <div className="top-actions">
+            <button
+              className="icon-button"
+              title="System status"
+              onClick={() => {
+                void fetchHealth()
+                setHealthModalOpen(true)
+              }}
+            >
+              <Activity size={17} />
+              <span className={`online ${health && !health.ok ? 'offline' : ''}`} />
+            </button>
+            <button
+              className="help"
+              title="Help & keyboard shortcuts"
+              onClick={() => setHelpModalOpen(true)}
+            >
+              ?
+            </button>
+            <button className="avatar mini" onClick={openSettings} title={user.name}>
+              {initials}
+            </button>
+          </div>
+        </header>
+
+        <div className="content">
+          {section === 'Constellation' ? (
+            <ConstellationExplorer
+              clips={clips}
+              onSelectClip={openClip}
+              onUploadClick={() => fileInputRef.current?.click()}
+            />
+          ) : section === 'Trash' ? (
+            <section className="trash-page">
+              <div className="library-head">
+                <div>
+                  <div className="section-kicker">
+                    RECOVERABLE STORAGE <span>✳</span>
+                  </div>
+                  <h2>
+                    Trash <span className="count">{trash.length}</span>
+                  </h2>
+                  <p className="section-sub">
+                    Removed videos stay here until you restore them or delete them permanently.
+                  </p>
+                </div>
+              </div>
+
+              {trash.length > 0 ? (
+                <div className="trash-list">
+                  {trash.map(clip => (
+                    <article className="trash-row" key={clip.id}>
+                      <div
+                        className={`trash-thumb ${clip.tone}`}
+                        style={
+                          clip.thumbnailUrl
+                            ? { backgroundImage: `url("${clip.thumbnailUrl}")` }
+                            : undefined
+                        }
+                      >
+                        <span className="duration">{clip.duration}</span>
+                      </div>
+                      <div className="trash-info">
+                        <h3>{clip.title}</h3>
+                        <p>
+                          {clip.category} · {clip.size} · Deleted {formatDate(clip.deletedAt)}
+                        </p>
+                      </div>
+                      <div className="trash-actions">
+                        <button className="tool-button" onClick={() => void restoreVideo(clip.id)}>
+                          <RotateCcw size={13} /> Restore
+                        </button>
+                        {confirmPermanentId === clip.id ? (
+                          <button
+                            className="danger-button solid"
+                            onClick={() => void permanentlyDelete(clip)}
+                          >
+                            Confirm delete
+                          </button>
+                        ) : (
+                          <button
+                            className="danger-button"
+                            onClick={() => setConfirmPermanentId(clip.id)}
+                          >
+                            <Trash2 size={13} /> Delete forever
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty">
+                  <div className="empty-icon">
+                    <Trash2 size={22} />
+                  </div>
+                  <h3>Trash is empty</h3>
+                  <p>Deleted videos will appear here so you can always restore them.</p>
+                </div>
+              )}
+            </section>
+          ) : (
+            <>
+              {/* Hero Welcome */}
+              <section className="welcome">
+                <div>
+                  <div className="eyebrow">
+                    <span className="live-dot" /> YOUR LITTLE CORNER OF THE CLOUD
+                  </div>
+                  <h1>
+                    Keep the moments
+                    <br />
+                    <i>that move you.</i>
+                  </h1>
+                  <p>A private home for your videos — transcoded to HLS and mapped by color.</p>
+                </div>
+                <div className="welcome-art">
+                  <div className="art-orbit orbit-one" />
+                  <div className="art-orbit orbit-two" />
+                  <div className="art-sun" />
+                  <div className="art-leaf leaf-one" />
+                  <div className="art-leaf leaf-two" />
+                  <div className="art-card">
+                    <Play size={17} fill="currentColor" />
+                    <span>your story, still unfolding</span>
+                  </div>
+                </div>
+              </section>
+
+              {/* Real Quick Stats */}
+              <section className="quick-stats">
+                <div className="stat">
+                  <div className="stat-icon green">
+                    <Film size={16} />
+                  </div>
+                  <div>
+                    <strong>{clips.length.toString().padStart(2, '0')}</strong>
+                    <span>videos saved</span>
+                  </div>
+                </div>
+                <div className="stat">
+                  <div className="stat-icon tan">
+                    <Cloud size={16} />
+                  </div>
+                  <div>
+                    <strong>{usedText}</strong>
+                    <span>of 100 GB used</span>
+                  </div>
+                </div>
+                <div className="stat">
+                  <div className="stat-icon pink">
+                    <Sparkles size={16} />
+                  </div>
+                  <div>
+                    <strong>
+                      {weeklyStats.count}{' '}
+                      <small>{weeklyStats.count === 1 ? 'clip' : 'clips'}</small>
+                    </strong>
+                    <span>
+                      {weeklyStats.days > 0
+                        ? `across ${weeklyStats.days} day${weeklyStats.days === 1 ? '' : 's'} this week`
+                        : 'added this week'}
+                    </span>
+                  </div>
+                </div>
+                <div className="stat-note">
+                  <span>✳</span> Every clip has a place here.
+                </div>
+              </section>
+
+              {/* Library Header */}
+              <section className="library-head">
+                <div>
+                  <div className="section-kicker">
+                    YOUR LIBRARY <span>✳</span>
+                  </div>
+                  <h2>
+                    Video shelf <span className="count">{visible.length}</span>
+                  </h2>
+                  <p className="section-sub">A few good things, all in one place.</p>
+                </div>
+                <button className="upload-btn" onClick={() => fileInputRef.current?.click()}>
+                  <Plus size={17} /> Add videos
+                </button>
+              </section>
+
+              {/* Toolbar */}
+              <div className="toolbar">
+                <div className="tabs">
+                  {LIBRARY_TABS.map(tabName => (
+                    <button
+                      key={tabName}
+                      onClick={() => setSection(tabName)}
+                      className={section === tabName ? 'chosen' : ''}
+                    >
+                      {tabName}
+                      <span>{categoryCounts[tabName] || 0}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="tools">
+                  <label className="search">
+                    <Search size={15} />
+                    <input
+                      ref={searchInputRef}
+                      placeholder="Find a video... (/)"
+                      value={query}
+                      onChange={event => setQuery(event.target.value)}
+                    />
+                    {query && (
+                      <button type="button" onClick={() => setQuery('')} aria-label="Clear search">
+                        <X size={13} />
+                      </button>
+                    )}
+                  </label>
+                  <button
+                    className={`tool-button ${statusFilter !== 'all' ? 'on' : ''}`}
+                    onClick={cycleFilter}
+                    title="Filter by processing status"
+                  >
+                    <Filter size={14} />
+                    <span>{statusFilter === 'all' ? 'Filter' : statusFilter}</span>
+                  </button>
+                  <button
+                    className={`tool-button ${sortMode !== 'newest' ? 'on' : ''}`}
+                    onClick={cycleSort}
+                    title={`Sort: ${SORT_LABELS[sortMode]}`}
+                  >
+                    <ArrowDownUp size={14} />
+                    <span className="sort-label">{SORT_LABELS[sortMode]}</span>
+                  </button>
+                  <div className="view-toggle">
+                    <button
+                      className={view === 'grid' ? 'selected' : ''}
+                      onClick={() => setView('grid')}
+                      aria-label="Grid view"
+                    >
+                      <Grid2X2 size={15} />
+                    </button>
+                    <button
+                      className={view === 'list' ? 'selected' : ''}
+                      onClick={() => setView('list')}
+                      aria-label="List view"
+                    >
+                      <List size={16} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {(statusFilter !== 'all' || query) && (
+                <div className="filter-note">
+                  <span>
+                    Showing {visible.length} video{visible.length === 1 ? '' : 's'}
+                    {statusFilter !== 'all' ? ` · Status: ${statusFilter}` : ''}
+                    {query ? ` · Matching “${query}”` : ''}
+                  </span>
+                  <button
+                    onClick={() => {
+                      setStatusFilter('all')
+                      setQuery('')
+                    }}
+                  >
+                    Clear filters <X size={13} />
+                  </button>
+                </div>
+              )}
+
+              {/* Video Grid / List */}
+              {loading ? (
+                <div className="empty">
+                  <p>Loading your video shelf…</p>
+                </div>
+              ) : visible.length > 0 ? (
+                <div className={`video-grid ${view === 'list' ? 'list-view' : ''}`}>
+                  {visible.map((clip, index) => {
+                    const isProcessing =
+                      clip.status === 'Queued' || clip.status === 'Processing'
+                    const isFailed = clip.status === 'Failed'
+                    const cardAccent = toneColor(clip.tone, clip.accentColor)
+                    return (
+                      <article className="video-card" key={clip.id}>
+                        <button
+                          className={`thumbnail ${clip.tone}`}
+                          onClick={() => openClip(clip)}
+                          style={
+                            clip.thumbnailUrl
+                              ? {
+                                  backgroundImage: `linear-gradient(180deg, transparent 42%, rgba(11,15,12,.68)), url("${clip.thumbnailUrl}")`
+                                }
+                              : {
+                                  background: `radial-gradient(circle at 28% 24%, ${cardAccent}36, #191d16 74%)`
+                                }
+                          }
+                        >
+                          <span className="duration">{clip.duration}</span>
+                          <span className="play-button">
+                            <Play size={17} fill="currentColor" />
+                          </span>
+                          <span className="thumb-index">
+                            {String(index + 1).padStart(2, '0')}
+                          </span>
+                          {isProcessing && (
+                            <span className="card-progress">
+                              <i style={{ width: `${clip.processing?.progress || 8}%` }} />
+                            </span>
+                          )}
+                        </button>
+                        <div className="card-meta">
+                          <div>
+                            <h3 title={clip.title}>{clip.title}</h3>
+                            <p>{clip.date}</p>
+                          </div>
+                          <button
+                            className="more"
+                            onClick={() => openClip(clip)}
+                            aria-label={`Inspect ${clip.title}`}
+                          >
+                            <MoreHorizontal size={18} />
+                          </button>
+                        </div>
+                        <div className="card-bottom">
+                          <span className="tag">
+                            <i
+                              className={`tag-dot ${clip.tone}`}
+                              style={{ background: cardAccent }}
+                            />
+                            {clip.category}
+                          </span>
+                          <span className="file-size">{clip.size}</span>
+                          <span
+                            className={`ready ${isFailed ? 'failed' : isProcessing ? 'busy' : ''}`}
+                          >
+                            <i />
+                            {isProcessing
+                              ? `${clip.processing?.progress ?? 0}%`
+                              : clip.status}
+                          </span>
+                        </div>
+                      </article>
+                    )
+                  })}
+                </div>
+              ) : (
+                <div className="empty">
+                  <div className="empty-icon">
+                    <Film size={22} />
+                  </div>
+                  <h3>No videos found</h3>
+                  <p>
+                    {clips.length > 0
+                      ? 'Try another search term, category, or status filter.'
+                      : 'Drop any video file anywhere on this page or click below to upload.'}
+                  </p>
+                  <button className="upload-btn" onClick={() => fileInputRef.current?.click()}>
+                    <Plus size={16} /> Add a video
+                  </button>
+                </div>
+              )}
+
+              {/* Interactive Memory Constellation Banner */}
+              {isLibraryView && (
+                <ConstellationBanner
+                  clips={clips}
+                  onSelectClip={openClip}
+                  onExplore={() => setSection('Constellation')}
+                />
+              )}
+            </>
+          )}
+
+          <footer>
+            <span>Made for the moments that stay.</span>
+            <span>
+              <i /> {health?.storage === 'supabase' ? 'Supabase cloud storage' : 'Local vault'}
+              <b>·</b> Signed HLS streaming
+            </span>
+            <span>© {new Date().getFullYear()} Afterframe</span>
+          </footer>
+        </div>
+      </main>
+
+      {/* Drag & drop overlay */}
+      {dragging && (
+        <div className="drop-overlay">
+          <div className="drop-card">
+            <CloudUpload size={34} />
+            <h3>Drop videos to upload</h3>
+            <p>
+              They’ll be added to{' '}
+              <b>{CATEGORIES.includes(section as Category) ? section : 'Moments'}</b> and
+              transcoded for HLS streaming.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Floating upload progress */}
+      {uploading && (
+        <div className="uploading">
+          <div className="upload-spin">
+            <CloudUpload size={17} />
+          </div>
+          <div className="upload-body">
+            <b>
+              Uploading {uploading.count} video{uploading.count > 1 ? 's' : ''} ({uploading.progress}
+              %)
+            </b>
+            <div className="upload-bar">
+              <i style={{ width: `${uploading.progress}%` }} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Account Settings Modal */}
+      {settingsOpen && (
+        <div className="modal-backdrop" onClick={() => setSettingsOpen(false)}>
+          <form
+            className="settings-modal"
+            onSubmit={saveProfile}
+            onClick={event => event.stopPropagation()}
+          >
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setSettingsOpen(false)}
+            >
+              <X size={17} />
+            </button>
+            <span className="section-kicker">ACCOUNT SETTINGS</span>
+            <h2>Your private library</h2>
+            <p>Update the display name shown across your video space.</p>
+            <label>
+              Display name
+              <input
+                value={profileName}
+                onChange={event => setProfileName(event.target.value)}
+                maxLength={80}
+                required
+              />
+            </label>
+            <label>
+              Email address
+              <input value={user.email} disabled />
+            </label>
+            <button className="upload-btn settings-save" disabled={savingProfile}>
+              {savingProfile ? 'Saving…' : 'Save changes'}
+            </button>
+          </form>
+        </div>
+      )}
+
+      {/* System Status Modal */}
+      {healthModalOpen && (
+        <div className="modal-backdrop" onClick={() => setHealthModalOpen(false)}>
+          <div className="settings-modal" onClick={event => event.stopPropagation()}>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setHealthModalOpen(false)}
+            >
+              <X size={17} />
+            </button>
+            <span className="section-kicker">SYSTEM HEALTH</span>
+            <h2>Service diagnostics</h2>
+            <p>Live status from your Afterframe storage API and media pipeline.</p>
+            <div className="diag-list">
+              <div className="diag-row">
+                <span>Storage API</span>
+                <strong className={health?.ok ? 'ok' : 'warn'}>
+                  {health?.ok ? 'Operational' : 'Unreachable'}
+                </strong>
+              </div>
+              <div className="diag-row">
+                <span>Persistence backend</span>
+                <strong>{health?.storage === 'supabase' ? 'Supabase Cloud' : 'Local Disk'}</strong>
+              </div>
+              <div className="diag-row">
+                <span>FFmpeg transcoder</span>
+                <strong className={health?.ffmpeg ? 'ok' : 'warn'}>
+                  {health?.ffmpeg ? 'Ready (H.264 / HLS)' : 'Not detected'}
+                </strong>
+              </div>
+              <div className="diag-row">
+                <span>Active processing jobs</span>
+                <strong>{health?.activeJobs ?? 0}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Storage Breakdown Modal */}
+      {storageModalOpen && (
+        <div className="modal-backdrop" onClick={() => setStorageModalOpen(false)}>
+          <div className="settings-modal" onClick={event => event.stopPropagation()}>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setStorageModalOpen(false)}
+            >
+              <X size={17} />
+            </button>
+            <span className="section-kicker">STORAGE OVERVIEW</span>
+            <h2>{usedText} used</h2>
+            <p>
+              {clips.length} active video{clips.length === 1 ? '' : 's'} ·{' '}
+              {formatTotalDuration(storageBreakdown.totalDuration)} total runtime
+            </p>
+            <div className="storage-meter large">
+              <i style={{ width: `${Math.max(usedBytes > 0 ? 3 : 0, usedPercent)}%` }} />
+            </div>
+            <div className="diag-list">
+              {storageBreakdown.byCategory.map(row => (
+                <div className="diag-row" key={row.label}>
+                  <span>
+                    {row.label} ({row.count})
+                  </span>
+                  <strong>{formatBytes(row.bytes)}</strong>
+                </div>
+              ))}
+              <div className="diag-row">
+                <span>Trash ({trash.length})</span>
+                <strong>{formatBytes(storageBreakdown.trashBytes)}</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Help & Shortcuts Modal */}
+      {helpModalOpen && (
+        <div className="modal-backdrop" onClick={() => setHelpModalOpen(false)}>
+          <div className="settings-modal" onClick={event => event.stopPropagation()}>
+            <button
+              type="button"
+              className="modal-close"
+              onClick={() => setHelpModalOpen(false)}
+            >
+              <X size={17} />
+            </button>
+            <span className="section-kicker">HELP & SHORTCUTS</span>
+            <h2>Using Afterframe</h2>
+            <p>Everything runs privately on your configured storage backend.</p>
+            <div className="diag-list">
+              <div className="diag-row">
+                <span>Upload videos</span>
+                <strong>Drag & drop anywhere or click Add videos</strong>
+              </div>
+              <div className="diag-row">
+                <span>Private sharing</span>
+                <strong>Open any clip → Copy private link</strong>
+              </div>
+              <div className="diag-row">
+                <span>Recover deleted clips</span>
+                <strong>Open Trash in the sidebar to restore</strong>
+              </div>
+              <div className="diag-row">
+                <span>Quick search</span>
+                <kbd>/</kbd>
+              </div>
+              <div className="diag-row">
+                <span>Close player or modal</span>
+                <kbd>Esc</kbd>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Video Player & Inspector Modal */}
+      {selected && (
+        <div
+          className="modal-backdrop"
+          onClick={() => {
+            setSelected(null)
+            setEditingClip(false)
+          }}
+        >
+          <div className="modal" onClick={event => event.stopPropagation()}>
+            <button
+              className="modal-close"
+              onClick={() => {
+                setSelected(null)
+                setEditingClip(false)
+              }}
+            >
+              <X size={17} />
+            </button>
+
+            <div className="modal-image">
+              {playback ? (
+                <HlsPlayer src={playback} poster={selected.thumbnailUrl} />
+              ) : (
+                <div className="preparing">
+                  <b>
+                    {selected.status === 'Failed'
+                      ? 'Stream conversion failed'
+                      : selected.processing?.stage || 'Preparing secure stream'}
+                  </b>
+                  <span>
+                    {selected.status === 'Failed'
+                      ? selected.error || 'Try retrying conversion or downloading the original file.'
+                      : `${selected.processing?.progress || 0}% complete · playback will start automatically`}
+                  </span>
+                  {selected.status === 'Failed' && (
+                    <button
+                      className="upload-btn retry-btn"
+                      onClick={() => void retryProcessing(selected)}
+                    >
+                      <RefreshCw size={13} /> Retry processing
+                    </button>
+                  )}
+                </div>
+              )}
+              <span className="duration">{selected.duration}</span>
+            </div>
+
+            {editingClip ? (
+              <form className="modal-edit-form" onSubmit={saveClipEdits}>
+                <label>
+                  Title
+                  <input
+                    value={editTitle}
+                    onChange={event => setEditTitle(event.target.value)}
+                    maxLength={120}
+                    required
+                  />
+                </label>
+                <label>
+                  Category
+                  <select
+                    value={editCategory}
+                    onChange={event => setEditCategory(event.target.value as Category)}
+                  >
+                    {CATEGORIES.map(category => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="modal-edit-actions">
+                  <button
+                    type="button"
+                    className="tool-button"
+                    onClick={() => setEditingClip(false)}
+                  >
+                    Cancel
+                  </button>
+                  <button className="upload-btn" disabled={savingClip}>
+                    {savingClip ? 'Saving…' : 'Save details'}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <div className="modal-info">
+                <div>
+                  <span className="section-kicker">
+                    {selected.category.toUpperCase()} · {selected.size}
+                    {selected.width && selected.height ? ` · ${selected.width}×${selected.height}` : ''}
+                  </span>
+                  <h2>{selected.title}</h2>
+                  <p>
+                    {selected.date} <span>·</span> Original quality stored securely
+                  </p>
+                </div>
+                <div className="modal-actions">
+                  <button
+                    className="tool-button"
+                    onClick={() => {
+                      setEditTitle(selected.title)
+                      setEditCategory(
+                        CATEGORIES.includes(selected.category as Category)
+                          ? (selected.category as Category)
+                          : 'Moments'
+                      )
+                      setEditingClip(true)
+                    }}
+                  >
+                    <Edit3 size={14} /> Edit
+                  </button>
+                  <a
+                    className="tool-button"
+                    href={`/api/videos/${selected.id}/original?download=1`}
+                    download
+                  >
+                    <Download size={14} /> Original
+                  </a>
+                  <button className="share-button" onClick={shareClip}>
+                    {copiedId === selected.id ? <Check size={15} /> : <Link2 size={15} />}
+                    {copiedId === selected.id ? 'Link copied' : 'Copy private link'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div className="modal-foot">
+              <span>
+                <i
+                  className={`ready-dot ${selected.status === 'Failed' ? 'failed' : ''}`}
+                />
+                {selected.status === 'Ready'
+                  ? 'Ready to stream via signed HLS'
+                  : selected.status === 'Failed'
+                    ? 'Transcoding failed · original playback fallback available'
+                    : `${selected.processing?.stage || selected.status} (${selected.processing?.progress ?? 0}%)`}
+              </span>
+              <button className="delete-button" onClick={() => void moveToTrash(selected)}>
+                <Trash2 size={13} /> Move to trash
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Toast Notification with optional Undo action */}
+      {toast && (
+        <div className="toast">
+          <Check size={15} />
+          <span>{toast.message}</span>
+          {toast.actionLabel && toast.onAction && (
+            <button
+              className="toast-action"
+              onClick={() => {
+                toast.onAction?.()
+                setToast(null)
+              }}
+            >
+              {toast.actionLabel}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default App

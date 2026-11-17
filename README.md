@@ -1,6 +1,8 @@
 # Afterframe
 
-A polished local implementation of an S3-like video library. Its signature feature is the **memory constellation**: a visual map that gives saved clips color signatures and turns a flat file list into a browsable story.
+A private S3-like video library with FFmpeg HLS transcoding, real thumbnail & color-signature extraction, recoverable trash, private share links, and an interactive **Memory Constellation** that plots your clips as glowing stars tinted by their own frames.
+
+Supports both **zero-config local filesystem storage** (`./data`) and **Supabase persistent cloud storage** (Auth, Postgres metadata, and private Storage bucket).
 
 ## Run locally
 
@@ -8,7 +10,7 @@ A polished local implementation of an S3-like video library. Its signature featu
 npm install
 ```
 
-Start the two local services in separate terminals:
+Start the API + FFmpeg worker and the Vite dev server in separate terminals:
 
 ```sh
 npm run server
@@ -17,27 +19,46 @@ npm run dev -- --host 127.0.0.1
 
 Then open `http://127.0.0.1:5173`.
 
+Or build and serve everything from one Node process:
+
+```sh
+npm run build
+npm start
+```
+
+Then open `http://127.0.0.1:3001`.
+
+## Tests
+
+Run the end-to-end API, FFmpeg transcoding, HLS signing, sharing, and trash test suite:
+
+```sh
+npm test
+```
+
 ## Deploy
 
-The included `Dockerfile` builds the web app and runs the API plus FFmpeg worker in one container. For Railway, Render, or Fly.io, deploy from this repository, attach a persistent disk at `/data`, and set `AFTERFRAME_SIGNING_SECRET` to a long random value. The service listens on the provider's `PORT` automatically.
+The included `Dockerfile` builds the frontend and runs the API + FFmpeg worker in one container. For Railway, Render, or Fly.io:
 
-## Supabase persistent storage
+1. Deploy from this repository.
+2. Set `AFTERFRAME_SIGNING_SECRET` to a long random secret.
+3. Either attach a persistent disk at `/data` (local mode) **or** configure Supabase environment variables (see `.env.example`).
 
-Run `supabase/schema.sql` in the project SQL editor to create the `videos` table, private `afterframe-videos` bucket, and owner-level access rules. The cloud project URL and service credentials belong in the deployment environment, never in source control.
+The service listens on `PORT` automatically.
 
-## Included
+## Supabase persistent storage (optional)
 
-- Responsive video library with category tabs, search, grid/list views, storage summary, and clip details.
-- Drag-and-drop or file picker upload backed by the local storage API.
-- A real FFmpeg processing worker that reads duration, transcodes H.264/AAC, and packages HLS playlists and six-second segments.
-- Expiring HMAC-signed HLS playback URLs and private share-token API endpoints.
-- Persisted library loading with automatic processing-status refresh. Every shelf entry comes from the storage API.
-- Browser-compatible HLS playback through `hls.js`, with native HLS playback used when available.
-- Account creation, sign-in, and sign-out with salted `scrypt` password hashes, seven-day HTTP-only sessions, and per-account library authorization.
-- Recoverable deletion: a removed video is hidden from the owner’s shelf and can be restored through `POST /api/videos/:id/restore` before any permanent cleanup.
-- Browser share pages at `/?share=<token>` for private links created from the video player.
-- Custom constellation illustration, designed as the product's distinctive library view.
+1. Run [`supabase/schema.sql`](supabase/schema.sql) in the Supabase SQL Editor to create the `public.videos` table, indexes, RLS policies, and the private `afterframe-videos` storage bucket.
+2. Set `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` (and optionally `SUPABASE_ANON_KEY`) in your deployment environment — never commit secrets to source control.
+3. When configured, Afterframe automatically uses Supabase Auth for accounts, Postgres for clip metadata, and the private `afterframe-videos` bucket for originals, thumbnails, and HLS streams.
 
-The included API persists uploaded video files in `data/uploads/`, HLS packages in `data/hls/`, video metadata in `data/clips.json`, and local account records in `data/users.json`. It intentionally uses a lightweight local filesystem store so it can run on this laptop without cloud credentials or external services. FFmpeg is required for processing and is installed on this laptop.
+## Features
 
-For a production S3-like deployment, replace the local storage layer with S3-compatible object storage, add authentication, move metadata to MongoDB, use Redis for caching, Kafka for job events, worker-based transcoding and HLS packaging, and serve segments through a CDN.
+- **Private accounts**: Registration, sign-in, profile editing, and sign-out with salted `scrypt` hashes (or Supabase Auth), timing-safe HMAC-signed HTTP-only sessions, and strict per-owner authorization.
+- **Upload & FFmpeg pipeline**: Drag-and-drop or file picker upload with live upload progress, automatic duration probing, JPEG poster thumbnail generation, dominant color signature extraction, and H.264/AAC 6-second HLS VOD packaging (with silent-video and odd-dimension safety).
+- **Signed HLS streaming**: Expiring HMAC-signed master playlists, `.ts` segments, and thumbnails served via `hls.js` (with native HLS and direct original fallback).
+- **Interactive Memory Constellation**: Both an inline constellation banner and a dedicated full-screen Constellation Explorer that plots your clips by category and real extracted color signatures, with hover tooltips, tone/category filtering, and click-to-play.
+- **Full library management**: Category tabs (`All videos`, `Moments`, `Travel`, `Field notes`), instant search (`/` shortcut), status filtering (`Ready`, `Processing`, `Failed`), multi-mode sorting (`Newest`, `Oldest`, `Title A–Z`, `Largest`, `Longest`), grid/list views, inline title & category editing, original file downloads, and failed-job retries.
+- **Recoverable Trash**: Soft-delete with one-click Undo toast, dedicated Trash view with Restore and confirmed permanent deletion (cleaning up disk and cloud assets).
+- **Private Share Pages**: Shareable viewing links at `/?share=<token>` with signed HLS playback and poster thumbnails, automatically revoked when a clip is moved to trash.
+- **Live diagnostics & storage breakdown**: Built-in System Health modal (`/api/health`), per-category Storage Overview modal, and Help & Shortcuts guide.

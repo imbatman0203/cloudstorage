@@ -8,11 +8,13 @@ create table if not exists public.videos (
   original_name text not null,
   category text not null default 'Moments',
   tone text not null default 'sage',
+  accent_color text,
   size_bytes bigint not null,
   duration_seconds numeric,
   mime_type text not null,
   original_path text not null,
   hls_path text,
+  thumbnail_path text,
   status text not null default 'Queued',
   processing_stage text not null default 'Queued',
   processing_progress integer not null default 0 check (processing_progress between 0 and 100),
@@ -21,7 +23,19 @@ create table if not exists public.videos (
   created_at timestamptz not null default now()
 );
 
+-- Safe migrations if the table already exists from an earlier schema version:
+alter table public.videos add column if not exists accent_color text;
+alter table public.videos add column if not exists thumbnail_path text;
+
+create index if not exists videos_owner_created_idx on public.videos (owner_id, created_at desc);
+create index if not exists videos_share_token_idx on public.videos (share_token);
+
 alter table public.videos enable row level security;
+
+drop policy if exists "Owners can view their videos" on public.videos;
+drop policy if exists "Owners can create their videos" on public.videos;
+drop policy if exists "Owners can update their videos" on public.videos;
+drop policy if exists "Owners can delete their videos" on public.videos;
 
 create policy "Owners can view their videos" on public.videos for select using (auth.uid() = owner_id);
 create policy "Owners can create their videos" on public.videos for insert with check (auth.uid() = owner_id);
@@ -31,6 +45,11 @@ create policy "Owners can delete their videos" on public.videos for delete using
 insert into storage.buckets (id, name, public)
 values ('afterframe-videos', 'afterframe-videos', false)
 on conflict (id) do nothing;
+
+drop policy if exists "Owners can read their video objects" on storage.objects;
+drop policy if exists "Owners can upload their video objects" on storage.objects;
+drop policy if exists "Owners can update their video objects" on storage.objects;
+drop policy if exists "Owners can remove their video objects" on storage.objects;
 
 create policy "Owners can read their video objects" on storage.objects for select using (bucket_id = 'afterframe-videos' and auth.uid()::text = (storage.foldername(name))[1]);
 create policy "Owners can upload their video objects" on storage.objects for insert with check (bucket_id = 'afterframe-videos' and auth.uid()::text = (storage.foldername(name))[1]);
