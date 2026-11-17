@@ -7,6 +7,7 @@ import {
   ChevronDown,
   CircleHelp,
   Cloud,
+  CloudOff,
   CloudUpload,
   Download,
   Edit3,
@@ -26,10 +27,20 @@ import {
   Settings2,
   Sparkles,
   Trash2,
+  WifiOff,
   X
 } from 'lucide-react'
 import { HlsPlayer } from './components/HlsPlayer'
 import { ConstellationBanner, ConstellationExplorer } from './components/ConstellationView'
+import {
+  clearAllOfflineData,
+  deleteOfflineVideo,
+  getOfflineThumb,
+  getOfflineVideo,
+  listOfflineVideoIds,
+  saveOfflineThumb,
+  saveOfflineVideo
+} from './offlineStore'
 import {
   CATEGORIES,
   Category,
@@ -48,6 +59,27 @@ import {
 } from './types'
 
 const STORAGE_QUOTA_BYTES = 100 * 1e9
+const AUTO_OFFLINE_MAX_BYTES = 150 * 1024 * 1024
+const LS_USER_KEY = 'afterframe:user'
+const LS_CLIPS_KEY = 'afterframe:clips'
+const LS_TRASH_KEY = 'afterframe:trash'
+
+function readStorageJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? (JSON.parse(raw) as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function writeStorageJson(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Ignore quota errors
+  }
+}
 
 const SORT_LABELS: Record<SortMode, string> = {
   newest: 'Newest first',
@@ -285,6 +317,11 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [user, setUser] = useState<User | null>(null)
   const [checking, setChecking] = useState(true)
+  const [isOffline, setIsOffline] = useState(!navigator.onLine)
+  const [offlineIds, setOfflineIds] = useState<Set<string>>(new Set())
+  const [cachingId, setCachingId] = useState<string | null>(null)
+  const [offlineThumbs, setOfflineThumbs] = useState<Record<string, string>>({})
+  const [playbackNotice, setPlaybackNotice] = useState('')
 
   // Modal states
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -306,6 +343,27 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const searchInputRef = useRef<HTMLInputElement>(null)
   const toastTimerRef = useRef<number | null>(null)
+  const playbackBlobRef = useRef<string | null>(null)
+  const offlineThumbsRef = useRef<Record<string, string>>({})
+  const inFlightCacheRef = useRef<Set<string>>(new Set())
+
+  const setPlaybackSource = useCallback((nextUrl: string) => {
+    if (playbackBlobRef.current && playbackBlobRef.current !== nextUrl) {
+      URL.revokeObjectURL(playbackBlobRef.current)
+      playbackBlobRef.current = null
+    }
+    if (nextUrl.startsWith('blob:')) {
+      playbackBlobRef.current = nextUrl
+    }
+    setPlayback(nextUrl)
+  }, [])
+
+  const closePlayer = useCallback(() => {
+    setSelected(null)
+    setEditingClip(false)
+    setPlaybackNotice('')
+    setPlaybackSource('')
+  }, [setPlaybackSource])
 
   const sharedToken = new URLSearchParams(window.location.search).get('share')
 
@@ -321,12 +379,93 @@ function App() {
     []
   )
 
+  const refreshOfflineIndex = useCallback(async () => {
+    try {
+      const ids = await listOfflineVideoIds()
+      setOfflineIds(new Set(ids))
+    } catch {
+      // IndexedDB unavailable
+    }
+  }, [])
+
+  const cacheClipThumbnail = useCallback(async (clip: Clip) => {
+    if (!clip.thumbnailUrl || offlineThumbsRef.current[clip.id]) return
+    try {
+      const cached = await getOfflineThumb(clip.id)
+      if (cached) {
+        const url = URL.createObjectURL(cached)
+        offlineThumbsRef.current[clip.id] = url
+        setOfflineThumbs(prev => ({ ...prev, [clip.id]: url }))
+        return
+      }
+      if (!navigator.onLine) return
+      const res = await fetch(clip.thumbnailUrl)
+      if (!res.ok) return
+      const blob = await res.blob()
+      await saveOfflineThumb(clip.id, blob)
+      const url = URL.createObjectURL(blob)
+      offlineThumbsRef.current[clip.id] = url
+      setOfflineThumbs(prev => ({ ...prev, [clip.id]: url }))
+    } catch {
+      // Ignore thumbnail cache errors
+    }
+  }, [])
+
+  const cacheClipForOffline = useCallback(
+    async (clip: Clip, { silent = false } = {}) => {
+      if (inFlightCacheRef.current.has(clip.id)) return
+      inFlightCacheRef.current.add(clip.id)
+      if (!silent) setCachingId(clip.id)
+      try {
+        const response = await fetch(`/api/videos/${clip.id}/original`)
+        if (!response.ok) throw new Error('Could not download video for offline playback')
+        const blob = await response.blob()
+        await saveOfflineVideo(clip.id, blob)
+        await cacheClipThumbnail(clip)
+        setOfflineIds(prev => new Set(prev).add(clip.id))
+        if (!silent) notify(`Saved “${clip.title}” for offline playback`)
+      } catch (reason) {
+        if (!silent) {
+          notify(reason instanceof Error ? reason.message : 'Could not save for offline')
+        }
+      } finally {
+        inFlightCacheRef.current.delete(clip.id)
+        if (!silent) setCachingId(current => (current === clip.id ? null : current))
+      }
+    },
+    [cacheClipThumbnail, notify]
+  )
+
+  const removeClipFromOffline = useCallback(
+    async (clip: Clip) => {
+      await deleteOfflineVideo(clip.id)
+      setOfflineIds(prev => {
+        const next = new Set(prev)
+        next.delete(clip.id)
+        return next
+      })
+      notify(`Removed “${clip.title}” from offline storage`)
+    },
+    [notify]
+  )
+
   const refreshLibrary = useCallback(
     async (silent = false) => {
+      if (!navigator.onLine) {
+        setIsOffline(true)
+        const cachedClips = readStorageJson<Clip[]>(LS_CLIPS_KEY, [])
+        const cachedTrash = readStorageJson<Clip[]>(LS_TRASH_KEY, [])
+        setClips(cachedClips)
+        setTrash(cachedTrash)
+        cachedClips.forEach(clip => void cacheClipThumbnail(clip))
+        setLoading(false)
+        return
+      }
       try {
         const [videosRes, trashRes] = await Promise.all([fetch('/api/videos'), fetch('/api/trash')])
         if (videosRes.status === 401) {
           setUser(null)
+          localStorage.removeItem(LS_USER_KEY)
           return
         }
         if (!videosRes.ok) throw new Error('Could not load library')
@@ -336,36 +475,102 @@ function App() {
         ])
         const nextClips: Clip[] = videoItems.map(mapApiClip)
         const nextTrash: Clip[] = trashItems.map(mapApiClip)
+        setIsOffline(false)
         setClips(nextClips)
         setTrash(nextTrash)
+        writeStorageJson(LS_CLIPS_KEY, nextClips)
+        writeStorageJson(LS_TRASH_KEY, nextTrash)
         setSelected(current =>
           current ? nextClips.find(clip => clip.id === current.id) || current : null
         )
+        nextClips.forEach(clip => {
+          void cacheClipThumbnail(clip)
+          // Automatically cache recent/small ready videos in the background for offline viewing
+          if (
+            clip.status === 'Ready' &&
+            clip.sizeBytes > 0 &&
+            clip.sizeBytes <= AUTO_OFFLINE_MAX_BYTES &&
+            !inFlightCacheRef.current.has(clip.id)
+          ) {
+            void getOfflineVideo(clip.id).then(existing => {
+              if (!existing) void cacheClipForOffline(clip, { silent: true })
+            })
+          }
+        })
       } catch {
-        if (!silent) notify('Storage service is unavailable')
+        setIsOffline(true)
+        const cachedClips = readStorageJson<Clip[]>(LS_CLIPS_KEY, [])
+        const cachedTrash = readStorageJson<Clip[]>(LS_TRASH_KEY, [])
+        if (cachedClips.length) {
+          setClips(cachedClips)
+          setTrash(cachedTrash)
+          cachedClips.forEach(clip => void cacheClipThumbnail(clip))
+        } else if (!silent) {
+          notify('You are offline — showing saved library')
+        }
       } finally {
         setLoading(false)
       }
     },
-    [notify]
+    [cacheClipForOffline, cacheClipThumbnail, notify]
   )
 
   const fetchHealth = useCallback(async () => {
+    if (!navigator.onLine) {
+      setIsOffline(true)
+      setHealth(null)
+      return
+    }
     try {
       const response = await fetch('/api/health')
-      if (response.ok) setHealth(await response.json())
+      if (response.ok) {
+        setHealth(await response.json())
+        setIsOffline(false)
+      }
     } catch {
       setHealth(null)
+      setIsOffline(true)
     }
   }, [])
 
-  // Initial session check
+  // Online / offline listeners + load offline IndexedDB index
+  useEffect(() => {
+    void refreshOfflineIndex()
+    const onOnline = () => {
+      setIsOffline(false)
+      void refreshLibrary(true)
+      void fetchHealth()
+    }
+    const onOffline = () => {
+      setIsOffline(true)
+    }
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    return () => {
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
+  }, [fetchHealth, refreshLibrary, refreshOfflineIndex])
+
+  // Initial session check (falls back to cached user when offline)
   useEffect(() => {
     ;(async () => {
+      if (!navigator.onLine) {
+        setIsOffline(true)
+        setUser(readStorageJson<User | null>(LS_USER_KEY, null))
+        setChecking(false)
+        return
+      }
       try {
         const response = await fetch('/api/auth/me')
         const data = await response.json()
-        setUser(data.user || null)
+        const nextUser: User | null = data.user || null
+        setUser(nextUser)
+        if (nextUser) writeStorageJson(LS_USER_KEY, nextUser)
+        else localStorage.removeItem(LS_USER_KEY)
+      } catch {
+        setIsOffline(true)
+        setUser(readStorageJson<User | null>(LS_USER_KEY, null))
       } finally {
         setChecking(false)
       }
@@ -393,8 +598,7 @@ function App() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
-        setSelected(null)
-        setEditingClip(false)
+        closePlayer()
         setSettingsOpen(false)
         setHealthModalOpen(false)
         setStorageModalOpen(false)
@@ -489,17 +693,22 @@ function App() {
     return map
   }, [clips])
 
-  // Upload using XHR for real progress tracking
+  // Upload using XHR for real progress tracking (and immediately store locally for offline playback)
   function upload(files: FileList | null) {
     if (!files?.length) return
+    if (!navigator.onLine) {
+      notify('Reconnect to the internet to upload new videos')
+      return
+    }
+    const fileArray = Array.from(files)
     const targetCategory: Category = CATEGORIES.includes(section as Category)
       ? (section as Category)
       : 'Moments'
     const formData = new FormData()
     formData.append('category', targetCategory)
-    Array.from(files).forEach(file => formData.append('videos', file))
+    fileArray.forEach(file => formData.append('videos', file))
 
-    setUploading({ count: files.length, progress: 0 })
+    setUploading({ count: fileArray.length, progress: 0 })
 
     const xhr = new XMLHttpRequest()
     xhr.open('POST', '/api/videos')
@@ -507,7 +716,7 @@ function App() {
     xhr.upload.onprogress = event => {
       if (event.lengthComputable) {
         const percent = Math.round((event.loaded / event.total) * 100)
-        setUploading({ count: files.length, progress: percent })
+        setUploading({ count: fileArray.length, progress: percent })
       }
     }
 
@@ -519,10 +728,23 @@ function App() {
           throw new Error(payload.error || 'Upload failed')
         }
         const saved: Clip[] = payload.map(mapApiClip)
-        setClips(previous => [...saved, ...previous])
+        setClips(previous => {
+          const merged = [...saved, ...previous]
+          writeStorageJson(LS_CLIPS_KEY, merged)
+          return merged
+        })
+        // Immediately persist uploaded files in IndexedDB so they play offline right away
+        saved.forEach((clip, idx) => {
+          const sourceFile = fileArray[idx]
+          if (sourceFile && sourceFile.size <= AUTO_OFFLINE_MAX_BYTES) {
+            void saveOfflineVideo(clip.id, sourceFile).then(() => {
+              setOfflineIds(prev => new Set(prev).add(clip.id))
+            })
+          }
+        })
         if (section === 'Trash') setSection('All videos')
         notify(
-          `${saved.length} video${saved.length > 1 ? 's' : ''} queued in ${targetCategory}`
+          `${saved.length} video${saved.length > 1 ? 's' : ''} saved & cached for offline`
         )
       } catch (reason) {
         notify(reason instanceof Error ? reason.message : 'Upload failed')
@@ -538,26 +760,66 @@ function App() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
+  const playFromOfflineCache = useCallback(
+    async (clip: Clip): Promise<boolean> => {
+      try {
+        const blob = await getOfflineVideo(clip.id)
+        if (!blob) return false
+        const blobUrl = URL.createObjectURL(blob)
+        setPlaybackSource(blobUrl)
+        setPlaybackNotice('')
+        return true
+      } catch {
+        return false
+      }
+    },
+    [setPlaybackSource]
+  )
+
   const requestPlayback = useCallback(
     async (clip: Clip, silent = false) => {
+      if (!navigator.onLine) {
+        const played = await playFromOfflineCache(clip)
+        if (!played) {
+          setPlaybackNotice(
+            'This video is not cached on this device yet. Reconnect once to save it for offline viewing.'
+          )
+        }
+        return
+      }
       try {
         const response = await fetch(`/api/videos/${clip.id}/playback`)
         if (response.status === 409) return
         if (!response.ok) throw new Error('Playback is unavailable')
         const data = await response.json()
-        setPlayback(data.url)
+        setPlaybackSource(data.url)
+        setPlaybackNotice('')
+        // Background-cache the video on this device so it also works offline later
+        if (clip.sizeBytes > 0 && clip.sizeBytes <= AUTO_OFFLINE_MAX_BYTES) {
+          void getOfflineVideo(clip.id).then(existing => {
+            if (!existing) void cacheClipForOffline(clip, { silent: true })
+          })
+        }
       } catch (reason) {
+        const played = await playFromOfflineCache(clip)
+        if (played) {
+          setIsOffline(true)
+          return
+        }
         if (!silent) {
-          notify(reason instanceof Error ? reason.message : 'Playback unavailable')
+          setPlaybackNotice(
+            reason instanceof Error ? reason.message : 'Playback unavailable offline'
+          )
         }
       }
     },
-    [notify]
+    [cacheClipForOffline, playFromOfflineCache, setPlaybackSource]
   )
 
   function openClip(clip: Clip) {
     setSelected(clip)
-    setPlayback('')
+    setPlaybackSource('')
+    setPlaybackNotice('')
     setEditingClip(false)
     setEditTitle(clip.title)
     setEditCategory(
@@ -567,12 +829,12 @@ function App() {
     void requestPlayback(clip)
   }
 
-  // Poll playback automatically while selected clip is still transcoding
+  // Poll playback automatically while selected clip is still transcoding (when online)
   useEffect(() => {
-    if (!selected || playback || selected.status === 'Failed') return
+    if (!selected || playback || selected.status === 'Failed' || isOffline) return
     const timer = window.setInterval(() => void requestPlayback(selected, true), 2500)
     return () => window.clearInterval(timer)
-  }, [selected, playback, requestPlayback])
+  }, [selected, playback, isOffline, requestPlayback])
 
   async function saveClipEdits(event: React.FormEvent) {
     event.preventDefault()
@@ -657,17 +919,28 @@ function App() {
       notify('Could not permanently delete video')
       return
     }
+    void deleteOfflineVideo(clip.id)
+    setOfflineIds(prev => {
+      const next = new Set(prev)
+      next.delete(clip.id)
+      return next
+    })
     setTrash(previous => previous.filter(item => item.id !== clip.id))
     setConfirmPermanentId(null)
     notify(`Permanently deleted “${clip.title}”`)
   }
 
   async function logout() {
-    await fetch('/api/auth/logout', { method: 'POST' })
+    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
+    localStorage.removeItem(LS_USER_KEY)
+    localStorage.removeItem(LS_CLIPS_KEY)
+    localStorage.removeItem(LS_TRASH_KEY)
+    void clearAllOfflineData()
+    setOfflineIds(new Set())
     setUser(null)
     setClips([])
     setTrash([])
-    setSelected(null)
+    closePlayer()
   }
 
   function openSettings() {
@@ -709,7 +982,16 @@ function App() {
 
   if (sharedToken) return <SharedVideoPage token={sharedToken} />
   if (checking) return <div className="app auth-loading">Loading your private library…</div>
-  if (!user) return <AuthScreen onAuthenticated={setUser} />
+  if (!user) {
+    return (
+      <AuthScreen
+        onAuthenticated={authedUser => {
+          writeStorageJson(LS_USER_KEY, authedUser)
+          setUser(authedUser)
+        }}
+      />
+    )
+  }
 
   const initials = user.name
     .split(/\s+/)
@@ -854,6 +1136,11 @@ function App() {
             Library <span>/</span> <b>{section}</b>
           </div>
           <div className="top-actions">
+            {isOffline && (
+              <span className="offline-pill" title="Playing cached videos from this device">
+                <WifiOff size={13} /> Offline mode
+              </span>
+            )}
             <button
               className="icon-button"
               title="System status"
@@ -863,7 +1150,7 @@ function App() {
               }}
             >
               <Activity size={17} />
-              <span className={`online ${health && !health.ok ? 'offline' : ''}`} />
+              <span className={`online ${isOffline || (health && !health.ok) ? 'offline' : ''}`} />
             </button>
             <button
               className="help"
@@ -1132,16 +1419,18 @@ function App() {
                     const isProcessing =
                       clip.status === 'Queued' || clip.status === 'Processing'
                     const isFailed = clip.status === 'Failed'
+                    const isCachedOffline = offlineIds.has(clip.id)
                     const cardAccent = toneColor(clip.tone, clip.accentColor)
+                    const thumbSrc = offlineThumbs[clip.id] || clip.thumbnailUrl
                     return (
                       <article className="video-card" key={clip.id}>
                         <button
                           className={`thumbnail ${clip.tone}`}
                           onClick={() => openClip(clip)}
                           style={
-                            clip.thumbnailUrl
+                            thumbSrc
                               ? {
-                                  backgroundImage: `linear-gradient(180deg, transparent 42%, rgba(11,15,12,.68)), url("${clip.thumbnailUrl}")`
+                                  backgroundImage: `linear-gradient(180deg, transparent 42%, rgba(11,15,12,.68)), url("${thumbSrc}")`
                                 }
                               : {
                                   background: `radial-gradient(circle at 28% 24%, ${cardAccent}36, #191d16 74%)`
@@ -1149,6 +1438,11 @@ function App() {
                           }
                         >
                           <span className="duration">{clip.duration}</span>
+                          {isCachedOffline && (
+                            <span className="offline-chip" title="Available offline on this device">
+                              <Check size={10} /> Offline
+                            </span>
+                          )}
                           <span className="play-button">
                             <Play size={17} fill="currentColor" />
                           </span>
@@ -1426,40 +1720,36 @@ function App() {
 
       {/* Video Player & Inspector Modal */}
       {selected && (
-        <div
-          className="modal-backdrop"
-          onClick={() => {
-            setSelected(null)
-            setEditingClip(false)
-          }}
-        >
+        <div className="modal-backdrop" onClick={closePlayer}>
           <div className="modal" onClick={event => event.stopPropagation()}>
-            <button
-              className="modal-close"
-              onClick={() => {
-                setSelected(null)
-                setEditingClip(false)
-              }}
-            >
+            <button className="modal-close" onClick={closePlayer}>
               <X size={17} />
             </button>
 
             <div className="modal-image">
               {playback ? (
-                <HlsPlayer src={playback} poster={selected.thumbnailUrl} />
+                <HlsPlayer
+                  src={playback}
+                  poster={offlineThumbs[selected.id] || selected.thumbnailUrl}
+                />
               ) : (
                 <div className="preparing">
                   <b>
-                    {selected.status === 'Failed'
-                      ? 'Stream conversion failed'
-                      : selected.processing?.stage || 'Preparing secure stream'}
+                    {playbackNotice
+                      ? 'Offline copy not saved yet'
+                      : selected.status === 'Failed'
+                        ? 'Stream conversion failed'
+                        : selected.processing?.stage || 'Preparing secure stream'}
                   </b>
                   <span>
-                    {selected.status === 'Failed'
-                      ? selected.error || 'Try retrying conversion or downloading the original file.'
-                      : `${selected.processing?.progress || 0}% complete · playback will start automatically`}
+                    {playbackNotice
+                      ? playbackNotice
+                      : selected.status === 'Failed'
+                        ? selected.error ||
+                          'Try retrying conversion or downloading the original file.'
+                        : `${selected.processing?.progress || 0}% complete · playback will start automatically`}
                   </span>
-                  {selected.status === 'Failed' && (
+                  {selected.status === 'Failed' && !isOffline && (
                     <button
                       className="upload-btn retry-btn"
                       onClick={() => void retryProcessing(selected)}
@@ -1522,8 +1812,28 @@ function App() {
                   </p>
                 </div>
                 <div className="modal-actions">
+                  {offlineIds.has(selected.id) ? (
+                    <button
+                      className="tool-button on"
+                      onClick={() => void removeClipFromOffline(selected)}
+                      title="Saved on this device for offline playback (click to remove)"
+                    >
+                      <Check size={14} /> Saved offline
+                    </button>
+                  ) : (
+                    <button
+                      className="tool-button"
+                      disabled={isOffline || cachingId === selected.id}
+                      onClick={() => void cacheClipForOffline(selected)}
+                      title="Store a copy on this device to play without internet"
+                    >
+                      <CloudOff size={14} />{' '}
+                      {cachingId === selected.id ? 'Saving…' : 'Save offline'}
+                    </button>
+                  )}
                   <button
                     className="tool-button"
+                    disabled={isOffline}
                     onClick={() => {
                       setEditTitle(selected.title)
                       setEditCategory(

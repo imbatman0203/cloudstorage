@@ -1,0 +1,17 @@
+{
+  "name": "Afterframe",
+  "short_name": "Afterframe",
+  "description": "Private video library with lossless HLS streaming, offline playback, and memory constellation.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#10120f",
+  "theme_color": "#10120f",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

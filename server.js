@@ -1307,8 +1307,19 @@ app.use('/api', (_req, res) => {
 
 const clientDir = join(process.cwd(), 'dist')
 if (existsSync(clientDir)) {
-  app.use(express.static(clientDir))
-  app.get(/.*/, (_req, res) => res.sendFile(join(clientDir, 'index.html')))
+  app.use(
+    express.static(clientDir, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('sw.js') || filePath.endsWith('index.html')) {
+          res.setHeader('Cache-Control', 'no-cache')
+        }
+      }
+    })
+  )
+  app.get(/.*/, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-cache')
+    res.sendFile(join(clientDir, 'index.html'))
+  })
 }
 
 app.use((error, _req, res, _next) => {
